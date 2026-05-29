@@ -91,36 +91,17 @@ def test_no_wall_walking():
 
 
 def test_solvable_by_optimal_play():
-    """A BFS-optimal walker should escape within the step cap on size=4."""
-    from collections import deque
-    wins = 0
-    for s in range(60):
+    """Every SERVED maze must be escapable within the 35-step cap counting
+    TURN actions too (not just forward moves). Uses the env's rejection sampler."""
+    from env import optimal_action_cost
+    worst = 0
+    for s in range(500):
         env = RaycastDungeonEnv()
         env.reset(seed=s, size=4)
-        # BFS shortest path on the grid
-        start, goal = (env.x, env.y), env.exit
-        prev = {start: None}
-        q = deque([start])
-        while q:
-            cur = q.popleft()
-            if cur == goal:
-                break
-            for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
-                nx, ny = cur[0] + dx, cur[1] + dy
-                if (nx, ny) not in prev and is_open(env.grid, nx, ny):
-                    prev[(nx, ny)] = cur
-                    q.append((nx, ny))
-        # reconstruct path length (cells); each move = 1 forward, turns add overhead
-        path = []
-        cur = goal
-        while cur is not None:
-            path.append(cur)
-            cur = prev[cur]
-        moves = len(path) - 1
-        if moves <= 35:
-            wins += 1
-    print(f"optimal-play escapable within cap: {wins}/60 (pure forward moves <= 35)")
-    assert wins == 60
+        cost = optimal_action_cost(env.grid, (env.x, env.y), env.facing, env.exit)
+        worst = max(worst, cost)
+        assert cost <= 35, f"seed {s} needs {cost} actions > 35 cap"
+    print(f"optimal-play escapable within cap: 500/500 (worst turn-inclusive optimal = {worst} <= 35)")
 
 
 if __name__ == "__main__":

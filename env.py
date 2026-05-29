@@ -143,6 +143,27 @@ def _reachable(grid: list[str], start, goal) -> bool:
     return False
 
 
+def optimal_action_cost(grid, start_xy, start_facing, exit_xy) -> int:
+    """Minimum number of ACTIONS (incl. turns) for a perfect player to reach the
+    exit. BFS over (x, y, facing) state using the real movement transition — this
+    is what the step cap actually charges against, so we use it to reject seeds
+    that aren't fairly escapable within the budget."""
+    start = (start_xy[0], start_xy[1], start_facing)
+    seen = {start}
+    q = deque([(start, 0)])
+    while q:
+        (x, y, f), d = q.popleft()
+        if (x, y) == exit_xy:
+            return d
+        for a in ("forward", "turn_left", "turn_right", "turn_around"):
+            nx, ny, nf, _ = apply_action(grid, x, y, f, a)
+            st = (nx, ny, nf)
+            if st not in seen:
+                seen.add(st)
+                q.append((st, d + 1))
+    return 10 ** 9
+
+
 class RaycastDungeonEnv(BaseEnv):
     """First-person maze escape. One action per turn; reach the exit to win."""
 
@@ -154,15 +175,24 @@ class RaycastDungeonEnv(BaseEnv):
 
     # ── Episode start ──────────────────────────────────────────────────────────
     def reset(self, seed: int | None = None, **params: Any) -> dict[str, Any]:
-        self._rng.seed(seed)
         self.seed = 0 if seed is None else int(seed)
-        self.size = int(params.get("size", self.size))
+        self.size = max(2, int(params.get("size", self.size)))   # guard degenerate size
         self.require_key = bool(params.get("require_key", self.require_key))
         self.max_steps = int(params.get("max_steps", 35))
 
-        self.grid, self.start, self.exit, self.key = _gen_maze(
-            self.size, self._rng, self.require_key
-        )
+        # Rejection-sample mazes so every served episode is fairly escapable within
+        # the step cap (turns cost actions too). Deterministic in `seed`.
+        budget = max(2, self.max_steps - 4)      # leave reasoning slack below the cap
+        attempt = 0
+        while True:
+            rng = random.Random(self.seed * 1009 + attempt)
+            grid, start, exit_, key = _gen_maze(self.size, rng, self.require_key)
+            if self.require_key or optimal_action_cost(grid, start, "S", exit_) <= budget:
+                break
+            attempt += 1
+            if attempt > 400:                    # safety; effectively never hit
+                break
+        self.grid, self.start, self.exit, self.key = grid, start, exit_, key
         self.x, self.y = self.start
         self.facing = "S"                      # face into the maze
         self.steps = 0

@@ -22,7 +22,7 @@
 
     "reward": {
       "type": "scalar",
-      "range": { "low": -2.45, "high": 1.15 },
+      "range": { "low": -2.45, "high": 1.0 },
       "description": "-0.02 per step; extra -0.05 on a wall bump; +1.0 terminal for reaching the exit. Positive iff escaped, negative iff floundering."
     },
 

@@ -204,8 +204,12 @@ const shortArc=(a,b)=>{let d=(b-a)%(2*Math.PI); d=((d+3*Math.PI)%(2*Math.PI))-Ma
 class Game{
   constructor(data){
     this.data=data;
+    // Keep only episodes with a clean terminal turn (drops infra-failed/rate-limited
+    // runs whose last turn has no info) — matches the platform's scoreable set.
     this.eps=Object.keys(data.replay).filter(id=>{
-      const t=data.replay[id]; return t&&t.length&&t[0].info&&t[0].info.maze;
+      const t=data.replay[id]; if(!t||!t.length) return false;
+      const last=t[t.length-1];
+      return last.info && last.info.maze && ("won_numeric" in last.info);
     });
     this.ei=0; this.playing=true; this.speed=1; this.ti=0; this.t0=null;
     const model=data.run?.config?.agent_config?.model||data.run?.config?.model||"model";
@@ -235,12 +239,13 @@ class Game{
   loadEpisode(idx){
     this.ei=(idx+this.eps.length)%this.eps.length;
     this.turns=this.data.replay[this.eps[this.ei]];
-    this.frames=this.turns.map(t=>({turn:t, s:this.parseInfo(t)}));
+    // only frames that carry full info (skip any partial/info-less turn defensively)
+    this.frames=this.turns.filter(t=>t.info&&t.info.maze).map(t=>({turn:t, s:this.parseInfo(t)}));
     this.grid=this.frames[0].s.maze;
     this.rows=this.grid.length; this.cols=this.grid[0].length;
     this.exit=this.frames[0].s.exit;
     this.ti=0; this.t0=null; this.trail=[];
-    this.last=this.turns[this.turns.length-1];
+    this.last=this.frames[this.frames.length-1].turn;
     this.won=this.last.info.won_numeric==="1";
     document.querySelectorAll(".cell").forEach((c,k)=>c.classList.toggle("cur",k===this.ei));
     document.getElementById("banner").className="banner";

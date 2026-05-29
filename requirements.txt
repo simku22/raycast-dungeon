@@ -1,0 +1,2 @@
+# No extra deps — env.py is pure standard library.
+# Sandbox provides: fastapi, uvicorn, httpx, pydantic, benchanything.

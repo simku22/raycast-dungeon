@@ -1,0 +1,50 @@
+{
+  "id": "raycast-dungeon",
+  "adapter": "adapter.py",
+  "name": "Raycast Dungeon — can an LLM escape a 3D maze?",
+  "description": "A first-person maze-escape benchmark. The agent perceives the maze only egocentrically (open/wall ahead-left-right, corridor depths, a compass bearing to the exit) and issues one discrete move per turn. It must reach the exit before the step cap. LLMs are poor at building a spatial map from first-person text, so they loop, backtrack, and walk into walls.",
+
+  "binding_vow": {
+    "version": "1.0.0",
+    "tier": "tier1",
+    "description": "First-person grid maze. Each turn: a JSON observation (ahead/left/right/behind = open|wall, corridor depths, 8-way exit bearing, exit distance, facing, steps_left, last_action_bumped). Action: one of forward/turn_left/turn_right/turn_around. forward into a wall is a no-op bump. Win by reaching the exit cell within the step cap.",
+
+    "observation_space": {
+      "type": "json",
+      "description": "{ ahead, left, right, behind: 'open'|'wall'; dist_ahead, dist_left, dist_right: int; facing: 'N'|'E'|'S'|'W'; exit_bearing: 8-way compass; exit_distance: int; inventory; on_item; steps_left: int; last_action_bumped: 'true'|'false' }"
+    },
+
+    "action_space": {
+      "type": "discrete",
+      "enum_values": ["forward", "turn_left", "turn_right", "turn_around"],
+      "description": "forward = advance one cell in facing (bump if wall); turn_left/right = rotate 90°; turn_around = rotate 180°"
+    },
+
+    "reward": {
+      "type": "scalar",
+      "range": { "low": -2.45, "high": 1.15 },
+      "description": "-0.02 per step; extra -0.05 on a wall bump; +1.0 terminal for reaching the exit. Positive iff escaped, negative iff floundering."
+    },
+
+    "episode": {
+      "max_steps": 35,
+      "deterministic_reset": true,
+      "supports_seed": true,
+      "parallel_episodes": 1,
+      "observability": "partial"
+    },
+
+    "techniques": []
+  },
+
+  "scoring": {
+    "primary_metric": "success_rate",
+    "higher_is_better": true,
+    "metrics": [
+      { "name": "success_rate",       "type": "terminal_field", "field": "won_numeric",  "aggregation": "mean" },
+      { "name": "mean_episode_reward", "type": "episode_reward",                          "aggregation": "mean" },
+      { "name": "avg_steps",          "type": "terminal_field", "field": "steps_taken",  "aggregation": "mean" },
+      { "name": "avg_bumps",          "type": "terminal_field", "field": "bump_count",   "aggregation": "mean" }
+    ]
+  }
+}

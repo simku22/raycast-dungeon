@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RAYCAST DUNGEON — can an LLM escape a 3D maze?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Major+Mono+Display&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#05070a; --void2:#0a0f12;
+    --amber:#ffb000; --amber-dim:#a86b00;
+    --teal:#38f5d0; --teal-dim:#1c8d79;
+    --blood:#ff3b4e; --gold:#ffd34d;
+    --ink:#cdeee6; --muted:#5d7a72;
+    --line:#15302b;
+    --disp:'VT323', ui-monospace, monospace;
+    --logo:'Major Mono Display', ui-monospace, monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1100px 520px at 50% -8%, #0c1714 0%, var(--void) 60%),
+      var(--void);
+    color:var(--ink); font-family:var(--disp); font-size:20px;
+    overflow-x:hidden; letter-spacing:.5px;
+  }
+  /* CRT overlay */
+  .crt::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px);
+    mix-blend-mode:multiply;
+  }
+  .crt::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:51;
+    background:radial-gradient(120% 90% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%);
+  }
+  @keyframes flicker{0%,100%{opacity:1}48%{opacity:.97}49%{opacity:.92}50%{opacity:.98}}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 20px 60px;animation:flicker 7s infinite}
+
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    border-bottom:2px solid var(--line);padding-bottom:14px;margin-bottom:18px}
+  .logo{font-family:var(--logo);font-size:30px;line-height:1;color:var(--amber);
+    text-shadow:0 0 14px rgba(255,176,0,.45), 3px 3px 0 #3a1d00}
+  .tag{color:var(--teal);font-size:19px}
+  .tag b{color:var(--gold)}
+  .model{font-size:17px;color:var(--void);background:var(--teal);padding:3px 12px;border-radius:3px;
+    letter-spacing:1px;box-shadow:0 0 16px rgba(56,245,208,.4)}
+
+  .stage{display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start}
+  @media(max-width:880px){.stage{grid-template-columns:1fr}}
+
+  /* viewport */
+  .screen{position:relative;border:2px solid var(--line);border-radius:6px;overflow:hidden;
+    background:#000;box-shadow:0 0 0 4px #000, 0 18px 60px -20px rgba(0,0,0,.9), inset 0 0 80px rgba(0,0,0,.6)}
+  canvas#view{display:block;width:100%;height:auto;image-rendering:pixelated;aspect-ratio:8/5}
+  .chroma{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;
+    box-shadow:inset 2px 0 0 rgba(255,0,80,.12), inset -2px 0 0 rgba(0,180,255,.12)}
+  .compass{position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:16px;color:var(--teal);
+    letter-spacing:8px;text-shadow:0 0 8px rgba(56,245,208,.6);z-index:6}
+  .compass b{color:var(--gold)}
+  /* minimap */
+  .mini{position:absolute;top:8px;right:8px;border:1px solid var(--teal-dim);background:rgba(5,12,10,.72);
+    border-radius:4px;padding:5px;z-index:6;box-shadow:0 0 20px rgba(0,0,0,.6)}
+  canvas#map{display:block;image-rendering:pixelated}
+  /* action glyph */
+  .glyph{position:absolute;left:10px;bottom:64px;font-size:46px;line-height:1;color:var(--teal);z-index:6;
+    text-shadow:0 0 16px rgba(56,245,208,.7);transition:transform .12s}
+  .glyph.bump{color:var(--blood);text-shadow:0 0 18px rgba(255,59,78,.9)}
+  .bumplabel{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%) rotate(-8deg);
+    font-family:var(--logo);font-size:54px;color:var(--blood);opacity:0;z-index:7;
+    text-shadow:0 0 24px rgba(255,59,78,.9),4px 4px 0 #4a0009;pointer-events:none}
+  .bumplabel.show{animation:bumpflash .55s ease}
+  @keyframes bumpflash{0%{opacity:0;transform:translate(-50%,-50%) scale(.5) rotate(-8deg)}
+    30%{opacity:1;transform:translate(-50%,-50%) scale(1.15) rotate(-8deg)}100%{opacity:0;transform:translate(-50%,-50%) scale(1) rotate(-8deg)}}
+  .banner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    z-index:8;background:rgba(2,5,4,.55);opacity:0;pointer-events:none;transition:opacity .4s}
+  .banner.show{opacity:1}
+  .banner .big{font-family:var(--logo);font-size:60px;letter-spacing:2px}
+  .banner .sub{font-size:22px;margin-top:6px;color:var(--ink)}
+  .banner.won .big{color:var(--gold);text-shadow:0 0 30px rgba(255,211,77,.7)}
+  .banner.lost .big{color:var(--amber);text-shadow:0 0 30px rgba(255,176,0,.6)}
+
+  /* DOOM-style status bar */
+  .statusbar{margin-top:14px;border:2px solid var(--line);border-radius:6px;background:linear-gradient(180deg,#0a1310,#070d0b);
+    display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:10px 14px}
+  .face{font-size:42px;width:60px;text-align:center;filter:drop-shadow(0 0 10px rgba(255,176,0,.4))}
+  .ticker{font-size:19px;color:var(--teal);min-height:52px;line-height:1.35;
+    border-left:2px solid var(--teal-dim);padding-left:12px;overflow:hidden}
+  .ticker .cur{color:var(--amber);animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .stat{text-align:right;font-size:18px;color:var(--amber);white-space:nowrap}
+  .stat b{color:var(--gold)} .stat .neg{color:var(--blood)} .stat .pos{color:var(--teal)}
+
+  /* sidebar */
+  aside{display:flex;flex-direction:column;gap:14px}
+  .panel{border:2px solid var(--line);border-radius:6px;background:rgba(8,16,13,.6);padding:14px}
+  .panel h3{font-size:16px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;font-weight:400}
+  .ring{display:flex;align-items:center;gap:14px}
+  .ring svg{transform:rotate(-90deg)}
+  .ring .num{font-size:40px;color:var(--gold);line-height:1}
+  .ring .lbl{font-size:16px;color:var(--muted);letter-spacing:2px}
+  .rail{display:flex;flex-wrap:wrap;gap:5px}
+  .cell{width:18px;height:18px;border:1px solid var(--line);border-radius:3px;background:#0c1714;cursor:pointer;
+    font-size:0;transition:transform .15s}
+  .cell:hover{transform:scale(1.18)}
+  .cell.won{background:var(--gold);box-shadow:0 0 8px rgba(255,211,77,.5)}
+  .cell.lost{background:var(--amber-dim)}
+  .cell.cur{outline:2px solid var(--teal);outline-offset:1px}
+  .ctrls{display:flex;gap:8px;align-items:center}
+  button{font-family:var(--disp);font-size:19px;color:var(--ink);background:#0c1714;border:1px solid var(--line);
+    border-radius:4px;padding:7px 12px;cursor:pointer;letter-spacing:1px;transition:all .15s}
+  button:hover{border-color:var(--teal);color:var(--teal)}
+  button.play{flex:1;background:var(--teal);color:var(--void);border-color:var(--teal);font-weight:bold}
+  button.play:hover{background:var(--gold);border-color:var(--gold)}
+  .meta{font-size:18px;color:var(--muted);line-height:1.6}
+  .meta b{color:var(--amber)}
+  .speed{display:flex;gap:6px;margin-top:8px}
+  .speed button{flex:1;padding:5px}
+  .speed button.on{background:var(--amber);color:var(--void);border-color:var(--amber)}
+  footer{margin-top:26px;text-align:center;color:var(--muted);font-size:17px}
+  footer a{color:var(--teal);text-decoration:none}
+  .err{padding:50px;text-align:center;color:var(--amber);font-size:20px}
+</style>
+</head>
+<body class="crt">
+<div class="wrap" id="wrap">
+  <header>
+    <div>
+      <div class="logo">RAYCAST DUNGEON</div>
+      <div class="tag">can an LLM escape a 3D maze? — watch it <b>wander, loop, and faceplant walls</b></div>
+    </div>
+    <div class="model" id="model">—</div>
+  </header>
+
+  <div class="stage">
+    <div>
+      <div class="screen">
+        <canvas id="view" width="384" height="240"></canvas>
+        <div class="chroma"></div>
+        <div class="compass" id="compass">· · ·</div>
+        <div class="mini"><canvas id="map" width="150" height="150"></canvas></div>
+        <div class="glyph" id="glyph">▲</div>
+        <div class="bumplabel" id="bumplabel">BUMP!</div>
+        <div class="banner" id="banner"><div class="big" id="bannerBig"></div><div class="sub" id="bannerSub"></div></div>
+      </div>
+      <div class="statusbar">
+        <div class="face" id="face">🙂</div>
+        <div class="ticker" id="ticker"></div>
+        <div class="stat" id="stat"></div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="panel">
+        <h3>Escape rate</h3>
+        <div class="ring">
+          <svg width="92" height="92">
+            <circle cx="46" cy="46" r="38" stroke="#15302b" stroke-width="9" fill="none"/>
+            <circle id="ringFg" cx="46" cy="46" r="38" stroke="#ffd34d" stroke-width="9" fill="none"
+              stroke-linecap="round" stroke-dasharray="238.7" stroke-dashoffset="238.7"/>
+          </svg>
+          <div><div class="num" id="rate">0%</div><div class="lbl" id="rateSub">0 / 0 escaped</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Run</h3>
+        <div class="meta" id="meta"></div>
+      </div>
+      <div class="panel">
+        <h3>Episodes</h3>
+        <div class="rail" id="rail"></div>
+      </div>
+      <div class="panel">
+        <div class="ctrls">
+          <button id="prev">‹ PREV</button>
+          <button class="play" id="play">⏸ PAUSE</button>
+          <button id="next">NEXT ›</button>
+        </div>
+        <div class="speed" id="speed"></div>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    A real DDA raycaster replaying an LLM's actual maze run · <a href="https://github.com/simku22/raycast-dungeon" target="_blank">raycast-dungeon</a> · SWECC Mesocosm
+  </footer>
+</div>
+
+<script src="data/replay.js" onerror="window.__noJs=1"></script>
+<script>
+//=== data load ===
+async function loadReplay(){
+  if(window.REPLAY) return window.REPLAY;
+  try{const r=await fetch("data/replay.json"); if(r.ok) return await r.json();}catch(e){}
+  return null;
+}
+const FACE_ANGLE={N:-Math.PI/2,E:0,S:Math.PI/2,W:Math.PI};
+const GLYPH={forward:"▲",turn_left:"◀",turn_right:"▶",turn_around:"⟲"};
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+const shortArc=(a,b)=>{let d=(b-a)%(2*Math.PI); d=((d+3*Math.PI)%(2*Math.PI))-Math.PI; return d;};
+
+class Game{
+  constructor(data){
+    this.data=data;
+    this.eps=Object.keys(data.replay).filter(id=>{
+      const t=data.replay[id]; return t&&t.length&&t[0].info&&t[0].info.maze;
+    });
+    this.ei=0; this.playing=true; this.speed=1; this.ti=0; this.t0=null;
+    const model=data.run?.config?.agent_config?.model||data.run?.config?.model||"model";
+    document.getElementById("model").textContent=model;
+    this.buildRail();
+    this.buildMeta();
+    this.buildSpeed();
+    document.getElementById("prev").onclick=()=>this.jump(this.ei-1);
+    document.getElementById("next").onclick=()=>this.jump(this.ei+1);
+    document.getElementById("play").onclick=()=>this.toggle();
+    this.view=document.getElementById("view"); this.vx=this.view.getContext("2d");
+    this.map=document.getElementById("map"); this.mx=this.map.getContext("2d");
+    this.loadEpisode(0);
+    requestAnimationFrame(ts=>this.frame(ts));
+  }
+  parseInfo(turn){
+    const i=turn.info||{};
+    return {
+      maze: JSON.parse(i.maze),
+      x:+i.x, y:+i.y, facing:i.facing,
+      px:+i.prev_x, py:+i.prev_y, pf:i.prev_facing,
+      exit: JSON.parse(i.exit),
+      bump:i.bump==="true", won:i.won==="true",
+      seed:i.seed, steps:+i.steps_taken, bumpc:+i.bump_count
+    };
+  }
+  loadEpisode(idx){
+    this.ei=(idx+this.eps.length)%this.eps.length;
+    this.turns=this.data.replay[this.eps[this.ei]];
+    this.frames=this.turns.map(t=>({turn:t, s:this.parseInfo(t)}));
+    this.grid=this.frames[0].s.maze;
+    this.rows=this.grid.length; this.cols=this.grid[0].length;
+    this.exit=this.frames[0].s.exit;
+    this.ti=0; this.t0=null; this.trail=[];
+    this.last=this.turns[this.turns.length-1];
+    this.won=this.last.info.won_numeric==="1";
+    document.querySelectorAll(".cell").forEach((c,k)=>c.classList.toggle("cur",k===this.ei));
+    document.getElementById("banner").className="banner";
+    this.tickerText=""; this.tickerFull="";
+  }
+  jump(i){this.playing=true;document.getElementById("play").textContent="⏸ PAUSE";this.loadEpisode(i);}
+  toggle(){this.playing=!this.playing;document.getElementById("play").textContent=this.playing?"⏸ PAUSE":"▶ PLAY";}
+
+  buildRail(){
+    const rail=document.getElementById("rail"); rail.innerHTML="";
+    this.eps.forEach((id,k)=>{
+      const t=this.data.replay[id];
+      const won=t[t.length-1].info.won_numeric==="1";
+      const c=document.createElement("div");
+      c.className="cell "+(won?"won":"lost");
+      c.title=`ep ${k+1}: ${won?"escaped":"lost"}`;
+      c.onclick=()=>this.jump(k);
+      rail.appendChild(c);
+    });
+    // escape-rate ring
+    let won=0; this.eps.forEach(id=>{const t=this.data.replay[id];won+=t[t.length-1].info.won_numeric==="1";});
+    const pct=this.eps.length?won/this.eps.length:0;
+    document.getElementById("rate").textContent=Math.round(pct*100)+"%";
+    document.getElementById("rateSub").textContent=`${won} / ${this.eps.length} escaped`;
+    const fg=document.getElementById("ringFg"); fg.style.transition="stroke-dashoffset 1s ease";
+    requestAnimationFrame(()=>fg.style.strokeDashoffset=(238.7*(1-pct)).toFixed(1));
+  }
+  buildMeta(){
+    const sc=this.data.run?.scores||{};
+    document.getElementById("meta").innerHTML=
+      `domain · <b>raycast-dungeon</b><br>`+
+      `episodes · <b>${this.eps.length}</b><br>`+
+      `success_rate · <b>${sc.success_rate!=null?Math.round(sc.success_rate*100)+"%":"—"}</b><br>`+
+      `mean reward · <b>${sc.mean_episode_reward!=null?sc.mean_episode_reward.toFixed(2):"—"}</b>`;
+  }
+  buildSpeed(){
+    const box=document.getElementById("speed");
+    [["0.5×",.5],["1×",1],["2×",2],["4×",4]].forEach(([lbl,v])=>{
+      const b=document.createElement("button"); b.textContent=lbl; if(v===1)b.classList.add("on");
+      b.onclick=()=>{this.speed=v;[...box.children].forEach(c=>c.classList.toggle("on",c===b));};
+      box.appendChild(b);
+    });
+  }
+
+  //=== animation tick ===
+  frame(ts){
+    const TURN_MS=620/this.speed;
+    if(this.t0===null)this.t0=ts;
+    const f=this.frames[this.ti];
+    let t=Math.min(1,(ts-this.t0)/TURN_MS);
+    const et=ease(t);
+    // interpolate pose
+    const s=f.s;
+    const ax=s.px+0.5, ay=s.py+0.5, bx=s.x+0.5, by=s.y+0.5;
+    const px=ax+(bx-ax)*et, py=ay+(by-ay)*et;
+    const a0=FACE_ANGLE[s.pf], h=a0+shortArc(a0,FACE_ANGLE[s.facing])*et;
+    // bump shake (position unchanged on a bump)
+    let shx=0, shy=0;
+    if(s.bump){const k=Math.sin(t*Math.PI); shx=(Math.random()-.5)*8*k; shy=(Math.random()-.5)*8*k;}
+    this.renderView(px,py,h,shx,shy,s.bump?t:null);
+    this.renderMap(px,py,h);
+    this.updateHud(f,t);
+    // advance
+    if(t>=1){
+      // breadcrumb after move completes
+      if(!this.trail.length||this.trail[this.trail.length-1][0]!==s.x||this.trail[this.trail.length-1][1]!==s.y)
+        this.trail.push([s.x,s.y]);
+      if(this.ti<this.frames.length-1){
+        if(this.playing){this.ti++;this.t0=ts;this.tickerText="";}
+      }else{
+        this.showBanner();
+        if(this.playing){ // pause on the end frame, then auto-advance after a beat
+          if(!this._endHold)this._endHold=ts;
+          if(ts-this._endHold>1600/this.speed){this._endHold=null;this.loadEpisode(this.ei+1);}
+        }
+      }
+    }
+    requestAnimationFrame(t2=>this.frame(t2));
+  }
+
+  //=== DDA raycaster ===
+  renderView(posX,posY,heading,shx,shy,bumpT){
+    const W=this.view.width,H=this.view.height,ctx=this.vx,g=this.grid;
+    ctx.setTransform(1,0,0,1,shx,shy);
+    // ceiling + floor
+    const cg=ctx.createLinearGradient(0,0,0,H/2); cg.addColorStop(0,"#02110e"); cg.addColorStop(1,"#06231d");
+    ctx.fillStyle=cg; ctx.fillRect(-8,-8,W+16,H/2+8);
+    const fg=ctx.createLinearGradient(0,H/2,0,H); fg.addColorStop(0,"#0a0805"); fg.addColorStop(1,"#1c1408");
+    ctx.fillStyle=fg; ctx.fillRect(-8,H/2,W+16,H/2+8);
+    const dirX=Math.cos(heading),dirY=Math.sin(heading);
+    const planeLen=0.66, planeX=-dirY*planeLen, planeY=dirX*planeLen;
+    for(let x=0;x<W;x++){
+      const camX=2*x/W-1;
+      const rdx=dirX+planeX*camX, rdy=dirY+planeY*camX;
+      let mapX=Math.floor(posX),mapY=Math.floor(posY);
+      const ddx=rdx===0?1e30:Math.abs(1/rdx), ddy=rdy===0?1e30:Math.abs(1/rdy);
+      let stepX,stepY,sideX,sideY;
+      if(rdx<0){stepX=-1;sideX=(posX-mapX)*ddx;}else{stepX=1;sideX=(mapX+1-posX)*ddx;}
+      if(rdy<0){stepY=-1;sideY=(posY-mapY)*ddy;}else{stepY=1;sideY=(mapY+1-posY)*ddy;}
+      let hit=0,side=0,guard=0;
+      while(!hit&&guard++<64){
+        if(sideX<sideY){sideX+=ddx;mapX+=stepX;side=0;}else{sideY+=ddy;mapY+=stepY;side=1;}
+        if(mapY<0||mapX<0||mapY>=this.rows||mapX>=this.cols){hit=2;break;}
+        if(g[mapY][mapX]===1)hit=1;
+      }
+      const perp=side===0?(sideX-ddx):(sideY-ddy);
+      const lh=Math.min(H*3, H/Math.max(perp,0.05));
+      const y0=Math.max(0,(H-lh)/2), y1=Math.min(H,(H+lh)/2);
+      // wall shade: oxblood->slate, EW darker (fake AO), fade with distance
+      const fogf=Math.max(0,1-perp/9);
+      let r,gg,b;
+      if(side===1){r=86;gg=30;b=34;}else{r=120;gg=44;b=40;} // S/E faces darker
+      r*=fogf; gg*=fogf; b*=fogf;
+      // teal rim near the exit cell
+      if(hit===1&&mapX===this.exit[0]&&mapY===this.exit[1]){r=20+200*fogf;gg=245*fogf;b=208*fogf;}
+      ctx.fillStyle=`rgb(${r|0},${gg|0},${b|0})`;
+      ctx.fillRect(x,y0,1,y1-y0);
+    }
+    // amber damage vignette on bump
+    if(bumpT!=null){
+      ctx.fillStyle=`rgba(255,59,78,${0.28*Math.sin(bumpT*Math.PI)})`;
+      ctx.fillRect(-8,-8,W+16,H+16);
+    }
+    ctx.setTransform(1,0,0,1,0,0);
+  }
+
+  renderMap(posX,posY,heading){
+    const ctx=this.mx,size=this.map.width,g=this.grid;
+    const sc=Math.floor(size/Math.max(this.cols,this.rows));
+    const ox=(size-sc*this.cols)/2, oy=(size-sc*this.rows)/2;
+    ctx.clearRect(0,0,size,size);
+    for(let y=0;y<this.rows;y++)for(let x=0;x<this.cols;x++){
+      if(g[y][x]===1){ctx.fillStyle="rgba(40,70,64,.55)";ctx.fillRect(ox+x*sc,oy+y*sc,sc,sc);}
+    }
+    // exit pulse
+    const pulse=0.5+0.5*Math.sin(performance.now()/300);
+    ctx.fillStyle=`rgba(255,211,77,${0.4+0.5*pulse})`;
+    ctx.fillRect(ox+this.exit[0]*sc,oy+this.exit[1]*sc,sc,sc);
+    // breadcrumb
+    ctx.strokeStyle="rgba(255,176,0,.5)";ctx.lineWidth=1.5;ctx.beginPath();
+    this.trail.forEach((p,k)=>{const cx=ox+(p[0]+.5)*sc,cy=oy+(p[1]+.5)*sc;k?ctx.lineTo(cx,cy):ctx.moveTo(cx,cy);});
+    ctx.lineTo(ox+posX*sc,oy+posY*sc); ctx.stroke();
+    // FOV cone
+    const cx=ox+posX*sc, cy=oy+posY*sc, L=sc*3.2;
+    ctx.fillStyle="rgba(56,245,208,.16)";ctx.beginPath();ctx.moveTo(cx,cy);
+    ctx.lineTo(cx+Math.cos(heading-0.55)*L,cy+Math.sin(heading-0.55)*L);
+    ctx.lineTo(cx+Math.cos(heading+0.55)*L,cy+Math.sin(heading+0.55)*L);
+    ctx.closePath();ctx.fill();
+    // agent
+    ctx.fillStyle="#38f5d0";ctx.beginPath();ctx.arc(cx,cy,Math.max(2,sc*0.28),0,7);ctx.fill();
+  }
+
+  updateHud(f,t){
+    const turn=f.turn, s=f.s, info=turn.info;
+    // compass
+    const facing=s.facing;
+    document.getElementById("compass").innerHTML=
+      ["N","E","S","W"].map(d=>d===facing?`<b>${d}</b>`:d).join(" ");
+    // glyph
+    const gEl=document.getElementById("glyph");
+    gEl.textContent=GLYPH[turn.action]||"·";
+    gEl.classList.toggle("bump",s.bump&&t>.15);
+    gEl.style.transform=`scale(${1+0.12*Math.max(0,Math.sin((1-t)*Math.PI*0.6))})`;
+    // bump label
+    const bl=document.getElementById("bumplabel");
+    if(s.bump&&t<0.08){bl.classList.remove("show");void bl.offsetWidth;bl.classList.add("show");}
+    // ticker (type out reasoning)
+    const full=turn.reasoning||"";
+    if(this.tickerFull!==full){this.tickerFull=full;this.tickerText="";}
+    const want=Math.floor(full.length*Math.min(1,t*1.4));
+    this.tickerText=full.slice(0,want);
+    document.getElementById("ticker").innerHTML=this.tickerText+'<span class="cur">▌</span>';
+    // face reaction
+    let face="🙂";
+    if(s.bump)face="😵"; else if(this.ti===this.frames.length-1&&t>=1)face=this.won?"😎":"💀";
+    else if(s.bumpc>=4)face="😟"; else if(+info.exit_distance<=2||+info.steps_left<8)face="😬";
+    document.getElementById("face").textContent=face;
+    // stat line
+    const rw=turn.reward;
+    document.getElementById("stat").innerHTML=
+      `STEP <b>${s.steps}</b>/35<br>`+
+      `reward <span class="${rw<0?'neg':'pos'}">${rw>=0?'+':''}${rw}</span><br>`+
+      `bumps <b>${s.bumpc}</b> · seed <b>${s.seed}</b>`;
+  }
+
+  showBanner(){
+    const b=document.getElementById("banner");
+    if(b.classList.contains("show"))return;
+    const trunc=this.last.truncated;
+    b.className="banner show "+(this.won?"won":"lost");
+    document.getElementById("bannerBig").textContent=this.won?"ESCAPED":"LOST IN THE DARK";
+    document.getElementById("bannerSub").textContent=this.won
+      ? `out in ${this.last.info.steps_taken} steps`
+      : `${this.last.info.bump_count} wall-bumps · never found the exit`;
+  }
+}
+
+loadReplay().then(d=>{
+  if(!d||!d.replay||!Object.keys(d.replay).length){
+    document.getElementById("wrap").innerHTML=
+      '<div class="err">NO REPLAY DATA.<br><br>serve it: <b>cd showcase &amp;&amp; python3 -m http.server</b><br>then open http://localhost:8000<br><br>or regenerate: <b>python3 gen_sample.py</b></div>';
+    return;
+  }
+  new Game(d);
+});
+</script>
+</body>
+</html>
